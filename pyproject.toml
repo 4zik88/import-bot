@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "tg-channel-import"
+version = "1.0.0"
+description = "RoApp -> Telegram Channel Product Importer"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.7,<4.0",
+    "aiohttp>=3.9,<4.0",
+    "aiosqlite>=0.19,<1.0",
+    "pydantic>=2.0,<3.0",
+    "pydantic-settings>=2.0,<3.0",
+    "python-dotenv>=1.0",
+]
