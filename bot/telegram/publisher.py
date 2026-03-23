@@ -5,7 +5,7 @@ import logging
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
-from aiogram.types import InputMediaPhoto, Message
+from aiogram.types import InputMediaPhoto, LinkPreviewOptions, Message
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,10 @@ async def publish_text(
     text: str,
 ) -> Message | None:
     try:
-        msg = await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
+        msg = await bot.send_message(
+            chat_id=channel_id, text=text, parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
         await asyncio.sleep(SEND_DELAY)
         return msg
     except TelegramRetryAfter as e:
@@ -85,6 +88,7 @@ async def edit_text(bot: Bot, channel_id: str, message_id: str, text: str) -> bo
         await bot.edit_message_text(
             chat_id=channel_id, message_id=int(message_id),
             text=text, parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
         await asyncio.sleep(SEND_DELAY)
         return True

@@ -126,18 +126,18 @@ def _format_smartphone(product: RoAppProduct, old_price: float | None = None) ->
     lines.append(_price_line(product, old_price))
     lines.append("")
 
-    # Version & SIM
-    if _is_usa(product):
-        lines.append("🌍 Версія: США")
-        lines.append("📶 SIM: тільки eSIM (без фізичної SIM)")
-    else:
-        lines.append("🌍 Версія: Європа")
-        lines.append("📶 SIM: 1 фізична SIM + eSIM")
-
-    lines.append("🔓 Neverlock (працює з будь-яким оператором)")
-
+    # Version & SIM — only for Apple
     if _is_apple(product):
+        if _is_usa(product):
+            lines.append("🌍 Версія: США")
+            lines.append("📶 SIM: тільки eSIM (без фізичної SIM)")
+        else:
+            lines.append("🌍 Версія: Європа")
+            lines.append("📶 SIM: 1 фізична SIM + eSIM")
+        lines.append("🔓 Neverlock (працює з будь-яким оператором)")
         lines.append("🔒 iCloud: чистий")
+    else:
+        lines.append("🔒 Google акаунт: чистий")
     lines.append("")
 
     # Condition

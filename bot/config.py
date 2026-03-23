@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     roapp_api_token: str = ""
     channel_id: str = ""
     warehouse_id: str = ""
+    auto_import_enabled: str = ""
+    auto_import_interval: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

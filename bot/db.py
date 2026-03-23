@@ -75,12 +75,15 @@ async def init_db() -> None:
 
     # Seed settings from env vars if DB is empty
     from bot.config import settings as cfg
-    for db_key, attr in [("roapp_api_token", "roapp_api_token"), ("channel_id", "channel_id"), ("warehouse_id", "warehouse_id")]:
-        val = getattr(cfg, attr, "")
+    for db_key in _ENV_FALLBACKS:
+        val = getattr(cfg, _ENV_FALLBACKS[db_key], "")
         if val:
             existing = await get_setting(db_key)
             if not existing:
                 await set_setting(db_key, val)
+    # Seed admin_chat_id from ADMIN_USER_ID
+    if not await get_setting("admin_chat_id"):
+        await set_setting("admin_chat_id", str(cfg.admin_user_id))
 
 
 # --- settings CRUD ---
@@ -89,6 +92,8 @@ _ENV_FALLBACKS = {
     "roapp_api_token": "roapp_api_token",
     "channel_id": "channel_id",
     "warehouse_id": "warehouse_id",
+    "auto_import_enabled": "auto_import_enabled",
+    "auto_import_interval": "auto_import_interval",
 }
 
 
