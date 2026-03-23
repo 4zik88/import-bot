@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     admin_user_ids: str = ""
     database_path: str = "data/bot.db"
 
+    # Persistent settings (survive redeploy via env vars)
+    roapp_api_token: str = ""
+    channel_id: str = ""
+    warehouse_id: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property

@@ -73,17 +73,40 @@ async def init_db() -> None:
     finally:
         await db.close()
 
+    # Seed settings from env vars if DB is empty
+    from bot.config import settings as cfg
+    for db_key, attr in [("roapp_api_token", "roapp_api_token"), ("channel_id", "channel_id"), ("warehouse_id", "warehouse_id")]:
+        val = getattr(cfg, attr, "")
+        if val:
+            existing = await get_setting(db_key)
+            if not existing:
+                await set_setting(db_key, val)
+
 
 # --- settings CRUD ---
+
+_ENV_FALLBACKS = {
+    "roapp_api_token": "roapp_api_token",
+    "channel_id": "channel_id",
+    "warehouse_id": "warehouse_id",
+}
+
 
 async def get_setting(key: str) -> str | None:
     db = await get_db()
     try:
         cur = await db.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = await cur.fetchone()
-        return row["value"] if row else None
+        if row:
+            return row["value"]
     finally:
         await db.close()
+    # Fallback to env vars for persistent settings
+    if key in _ENV_FALLBACKS:
+        from bot.config import settings as cfg
+        val = getattr(cfg, _ENV_FALLBACKS[key], "")
+        return val if val else None
+    return None
 
 
 async def set_setting(key: str, value: str) -> None:
