@@ -7,35 +7,61 @@ from aiogram import Bot
 from bot import db
 from bot.roapp.client import RoAppClient
 from bot.roapp.models import RoAppProduct
-from bot.telegram.formatter import build_media_group, format_caption
+from bot.telegram.formatter import (
+    CAT_LAPTOPS, CAT_SMARTPHONES, CAT_TABLETS,
+    build_media_group, format_caption, set_category_tree,
+)
 from bot.telegram.publisher import delete_message, edit_caption, edit_text, publish_media_group, publish_text
 
 logger = logging.getLogger(__name__)
 
-# Smartphone category IDs (Смартфони + all children)
-_smartphone_cat_ids: set[str] = set()
+# Root category IDs
+CATEGORY_ROOTS = {
+    CAT_SMARTPHONES: "Смартфони",
+    CAT_TABLETS: "Планшети",
+    CAT_LAPTOPS: "Ноутбуки",
+}
+
+# Cached category trees: {root_id: set of all child IDs}
+_category_trees: dict[str, set[str]] = {}
 
 
-async def _load_smartphone_categories(client: RoAppClient) -> set[str]:
-    global _smartphone_cat_ids
-    if _smartphone_cat_ids:
-        return _smartphone_cat_ids
+async def _load_category_trees(client: RoAppClient) -> dict[str, set[str]]:
+    """Load category trees for all supported root categories."""
+    global _category_trees
+    if _category_trees:
+        return _category_trees
 
     cats = await client.get_categories()
     all_cats = {str(c.id): str(c.parent_id) if c.parent_id else None for c in cats}
 
-    # Смартфони = 718966
-    result = {"718966"}
-    queue = ["718966"]
-    while queue:
-        pid = queue.pop()
-        for cid, parent in all_cats.items():
-            if parent == pid and cid not in result:
-                result.add(cid)
-                queue.append(cid)
+    for root_id in CATEGORY_ROOTS:
+        result = {root_id}
+        queue = [root_id]
+        while queue:
+            pid = queue.pop()
+            for cid, parent in all_cats.items():
+                if parent == pid and cid not in result:
+                    result.add(cid)
+                    queue.append(cid)
+        _category_trees[root_id] = result
+        set_category_tree(root_id, result)
 
-    _smartphone_cat_ids = result
+    return _category_trees
+
+
+def _get_all_allowed_ids() -> set[str]:
+    """Get all category IDs across all supported trees."""
+    result: set[str] = set()
+    for ids in _category_trees.values():
+        result |= ids
     return result
+
+
+# Keep backward compatibility
+async def _load_smartphone_categories(client: RoAppClient) -> set[str]:
+    trees = await _load_category_trees(client)
+    return trees.get(CAT_SMARTPHONES, set())
 
 
 class ImportResult:
@@ -77,8 +103,9 @@ async def run_import(
 
     client = RoAppClient(api_token)
     try:
-        # Load smartphone category tree
-        smart_cats = await _load_smartphone_categories(client)
+        # Load all category trees (smartphones, tablets, laptops)
+        await _load_category_trees(client)
+        allowed_ids = _get_all_allowed_ids()
 
         # Load from warehouse endpoint (has stock + images)
         warehouse_id = await db.get_setting("warehouse_id")
@@ -89,17 +116,17 @@ async def run_import(
         else:
             products = await client.get_products()
 
-        # Filter: only smartphones in stock
-        products = [p for p in products if p.category_id in smart_cats]
+        # Filter: only smartphones, tablets, laptops
+        products = [p for p in products if p.category_id in allowed_ids]
         result.found = len(products)
 
-        # Build a set of current product SKUs for sold-check later
+        # Build SKU map
         current_skus: dict[str, RoAppProduct] = {}
         for p in products:
             if p.sku:
                 current_skus[p.sku] = p
 
-        # Check previously posted products — remove sold ones
+        # Check previously posted products — remove sold ones, update prices
         posted = await db.get_all_posted_products()
         for pp in posted:
             sku = pp.get("sku", "")
@@ -109,7 +136,6 @@ async def run_import(
                 continue
 
             prod = current_skus.get(sku)
-            # Product sold or no longer in stock → delete from channel
             if not prod or prod.stock <= 0:
                 deleted = await delete_message(bot, ch_id, msg_id)
                 if deleted:
@@ -117,7 +143,6 @@ async def run_import(
                     result.removed += 1
                 continue
 
-            # Price changed → update post with strikethrough old price
             old_price = pp.get("price") or 0
             if abs(old_price - prod.price) > 0.01:
                 updated = await _update_post(bot, ch_id, msg_id, prod, old_price=old_price)
@@ -177,9 +202,7 @@ async def _update_post(
     bot: Bot, channel_id: str, message_id: str, product: RoAppProduct,
     old_price: float | None = None,
 ) -> bool:
-    """Try to update caption of existing post (works for text messages and first media in group)."""
     caption = format_caption(product, old_price=old_price)
-    # Try as media group caption first, then as text
     if await edit_caption(bot, channel_id, message_id, caption):
         return True
     if await edit_text(bot, channel_id, message_id, caption):
