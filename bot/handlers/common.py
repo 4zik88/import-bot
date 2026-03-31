@@ -34,6 +34,7 @@ async def cmd_start(message: Message) -> None:
         "/products — Перегляд смартфонів\n"
         "/import — Запустити імпорт\n"
         "/history — Історія імпортів\n"
+        "/clear_channel — Видалити всі пости з каналу\n"
         "/reset — Скинути історію публікацій\n"
         "/schedule — Налаштування автоімпорту\n"
         "/status — Поточний статус\n"

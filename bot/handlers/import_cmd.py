@@ -6,6 +6,7 @@ from aiogram.types import Message
 
 from bot import db
 from bot.services.importer import run_import
+from bot.telegram.publisher import delete_message
 
 router = Router()
 
@@ -120,3 +121,65 @@ async def process_reset_callback(callback: types.CallbackQuery) -> None:
     else:
         await callback.message.edit_text("Сброс отменён.")
     await callback.answer()
+
+
+@router.message(Command("clear_channel"))
+async def cmd_clear_channel(message: Message) -> None:
+    count = await db.get_posted_products_count()
+    if count == 0:
+        await message.answer("Немає опублікованих товарів для видалення.")
+        return
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text=f"Так, видалити {count} постів", callback_data="clch:confirm"),
+            types.InlineKeyboardButton(text="Скасувати", callback_data="clch:cancel"),
+        ]
+    ])
+    await message.answer(
+        f"<b>Очистити канал?</b>\n\n"
+        f"Буде видалено {count} постів з каналу та очищено базу.\n"
+        f"Після цього можна запустити /import заново.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("clch:"))
+async def process_clear_channel(callback: types.CallbackQuery) -> None:
+    action = callback.data.split(":")[1]
+
+    if action == "cancel":
+        await callback.message.edit_text("Скасовано.")
+        await callback.answer()
+        return
+
+    if action == "confirm":
+        await callback.answer()
+        posted = await db.get_all_posted_products()
+        total = len(posted)
+        deleted = 0
+        errors = 0
+
+        await callback.message.edit_text(f"Видаляю {total} постів з каналу...")
+
+        for pp in posted:
+            msg_id = pp.get("message_id")
+            ch_id = pp.get("channel_id")
+            sku = pp.get("sku", "")
+            if msg_id and ch_id:
+                ok = await delete_message(callback.bot, ch_id, msg_id)
+                if ok:
+                    deleted += 1
+                else:
+                    errors += 1
+            if sku:
+                await db.delete_posted_product(sku)
+
+        await callback.message.edit_text(
+            f"<b>Канал очищено!</b>\n\n"
+            f"Видалено постів: {deleted}\n"
+            f"Помилок: {errors}\n\n"
+            f"Тепер можна запустити /import",
+            parse_mode="HTML",
+        )
