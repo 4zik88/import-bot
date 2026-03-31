@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from aiogram import Bot
@@ -14,6 +15,20 @@ from bot.telegram.formatter import (
 from bot.telegram.publisher import delete_message, edit_caption, edit_text, publish_media_group, publish_text
 
 logger = logging.getLogger(__name__)
+
+
+def _product_hash(product: RoAppProduct) -> str:
+    """Hash of all product data that appears in a post."""
+    parts = [
+        product.name,
+        str(product.price),
+        str(product.stock),
+        format_caption(product),
+        ",".join(product.images),
+        str(product.custom_attributes),
+    ]
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
+
 
 # Root category IDs
 CATEGORY_ROOTS = {
@@ -143,14 +158,38 @@ async def run_import(
                     result.removed += 1
                 continue
 
+            # Check if anything changed (price, photos, custom fields, etc.)
+            old_hash = pp.get("content_hash") or ""
+            old_image_count = pp.get("image_count") or 0
+            new_hash = _product_hash(prod)
             old_price = pp.get("price") or 0
-            if abs(old_price - prod.price) > 0.01:
-                updated = await _update_post(bot, ch_id, msg_id, prod, old_price=old_price)
-                if updated:
-                    await db.update_posted_product(
-                        sku, price=prod.price, stock=prod.stock, is_sold=False,
+            price_changed = abs(old_price - prod.price) > 0.01
+            images_changed = len(prod.images) != old_image_count
+
+            if new_hash != old_hash:
+                if images_changed:
+                    # Photos changed — delete old post, publish new one
+                    await delete_message(bot, ch_id, msg_id)
+                    new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None)
+                    if new_msg_id:
+                        await db.update_posted_product(
+                            sku, price=prod.price, stock=prod.stock, is_sold=False,
+                            message_id=new_msg_id, content_hash=new_hash,
+                            image_count=len(prod.images),
+                        )
+                        result.updated += 1
+                else:
+                    # Only text/caption changed — update in place
+                    updated = await _update_post(
+                        bot, ch_id, msg_id, prod,
+                        old_price=old_price if price_changed else None,
                     )
-                    result.updated += 1
+                    if updated:
+                        await db.update_posted_product(
+                            sku, price=prod.price, stock=prod.stock, is_sold=False,
+                            content_hash=new_hash,
+                        )
+                        result.updated += 1
 
         # Publish new products (in stock only)
         for i, product in enumerate(products):
@@ -161,21 +200,15 @@ async def run_import(
                     result.skipped += 1
                     continue
 
-                media = await build_media_group(product)
-                if media:
-                    messages = await publish_media_group(bot, channel_id, media)
-                    msg_id = str(messages[0].message_id) if messages else None
-                else:
-                    caption = format_caption(product)
-                    msg = await publish_text(bot, channel_id, caption)
-                    msg_id = str(msg.message_id) if msg else None
-
-                if msg_id:
+                new_msg_id = await _publish_product(bot, channel_id, product)
+                if new_msg_id:
                     await db.add_posted_product(
                         sku=product.sku, roapp_id=product.id,
                         name=product.name, price=product.price,
-                        message_id=msg_id, channel_id=channel_id,
+                        message_id=new_msg_id, channel_id=channel_id,
                         stock=product.stock,
+                        content_hash=_product_hash(product),
+                        image_count=len(product.images),
                     )
                     result.posted += 1
                 else:
@@ -196,6 +229,21 @@ async def run_import(
         log_id, result.found, result.posted, result.skipped, result.errors, status,
     )
     return result
+
+
+async def _publish_product(
+    bot: Bot, channel_id: str, product: RoAppProduct,
+    old_price: float | None = None,
+) -> str | None:
+    """Publish a product and return the message_id, or None on failure."""
+    media = await build_media_group(product, old_price=old_price)
+    if media:
+        messages = await publish_media_group(bot, channel_id, media)
+        return str(messages[0].message_id) if messages else None
+    else:
+        caption = format_caption(product, old_price=old_price)
+        msg = await publish_text(bot, channel_id, caption)
+        return str(msg.message_id) if msg else None
 
 
 async def _update_post(

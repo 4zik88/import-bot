@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS posted_products (
     stock      INTEGER DEFAULT 0,
     message_id TEXT,
     channel_id TEXT,
-    is_sold    INTEGER DEFAULT 0,
-    posted_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_sold      INTEGER DEFAULT 0,
+    content_hash TEXT DEFAULT '',
+    image_count  INTEGER DEFAULT 0,
+    posted_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -67,6 +69,14 @@ async def init_db() -> None:
             pass
         try:
             await db.execute("ALTER TABLE posted_products ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE posted_products ADD COLUMN content_hash TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE posted_products ADD COLUMN image_count INTEGER DEFAULT 0")
         except Exception:
             pass
         await db.commit()
@@ -150,14 +160,14 @@ async def is_product_posted(sku: str) -> bool:
 async def add_posted_product(
     sku: str, roapp_id: str, name: str, price: float | None,
     message_id: str | None, channel_id: str | None,
-    stock: int = 0,
+    stock: int = 0, content_hash: str = "", image_count: int = 0,
 ) -> None:
     db = await get_db()
     try:
         await db.execute(
-            "INSERT OR IGNORE INTO posted_products (sku, roapp_id, name, price, stock, message_id, channel_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (sku, roapp_id, name, price, stock, message_id, channel_id),
+            "INSERT OR IGNORE INTO posted_products (sku, roapp_id, name, price, stock, message_id, channel_id, content_hash, image_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sku, roapp_id, name, price, stock, message_id, channel_id, content_hash, image_count),
         )
         await db.commit()
     finally:
@@ -175,7 +185,8 @@ async def get_posted_product(sku: str) -> dict | None:
 
 
 async def update_posted_product(sku: str, price: float | None = None, stock: int | None = None,
-                                 is_sold: bool | None = None, message_id: str | None = None) -> None:
+                                 is_sold: bool | None = None, message_id: str | None = None,
+                                 content_hash: str | None = None, image_count: int | None = None) -> None:
     db = await get_db()
     try:
         updates: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
@@ -192,6 +203,12 @@ async def update_posted_product(sku: str, price: float | None = None, stock: int
         if message_id is not None:
             updates.append("message_id = ?")
             params.append(message_id)
+        if content_hash is not None:
+            updates.append("content_hash = ?")
+            params.append(content_hash)
+        if image_count is not None:
+            updates.append("image_count = ?")
+            params.append(image_count)
         params.append(sku)
         await db.execute(f"UPDATE posted_products SET {', '.join(updates)} WHERE sku = ?", params)
         await db.commit()
