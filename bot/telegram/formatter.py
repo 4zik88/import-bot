@@ -33,13 +33,13 @@ TELEGRAM_CONTACT = "https://t.me/sotik_ua"
 
 FOOTER = (
     "━━━━━━━━━━━━━━━\n"
-    "🔧 Ремонт телефонів, планшетів, ноутбуків\n"
-    "📱 Продаж нової та б/у техніки\n"
-    "♻️ Обмін • Викуп\n"
+    '🔧 Ремонт • 📱 Продаж • ♻️ Обмін • Викуп\n'
     '🌐 <a href="https://sotik.in.ua">SOTIK.in.ua</a> - Ціни нижче ніж задарма!\n'
-    "📍 м. Козятин, Героїв Майдану 20\n"
-    f'📞 097 985 09 92 (<a href="{TELEGRAM_CONTACT}">Напиши в Telegram</a>)'
+    "📍 Козятин, Героїв Майдану 20\n"
+    f'📞 <a href="{TELEGRAM_CONTACT}">097 985 09 92</a>'
 )
+
+MAX_CAMERA_LEN = 120
 
 
 def set_category_tree(cat_root: str, ids: set[str]) -> None:
@@ -147,44 +147,33 @@ def _format_smartphone(product: RoAppProduct, old_price: float | None = None) ->
     screen = _get_cf(product, "screen")
     if screen:
         lines.append(f"🖥 Екран: {screen}")
-
     # Processor
     processor = _get_cf(product, "processor")
     if processor:
         lines.append(f"⚡ Процесор: {processor}")
-    lines.append("")
-
     # Camera
     camera = _get_cf(product, "camera")
     if camera:
-        lines.append("📸 Камера:")
-        lines.append(f" • {camera}")
-        lines.append("")
-
+        lines.append(f"📸 Камера: {_trim(camera, MAX_CAMERA_LEN)}")
     # Battery
     battery = _get_cf(product, "battery")
     if battery:
         lines.append(f"🔋 АКБ: {battery}")
-        lines.append("")
+    lines.append("")
 
     # Checked
-    checks = ["Face ID", "Камери", "Динаміки", "Мікрофони", "NFC"] if _is_apple(product) else ["Камери", "Динаміки", "Мікрофони", "NFC"]
-    lines.append("✅ Повністю перевірений:")
-    lines.append(" • ".join(checks))
-    lines.append("")
+    checks = "Face ID • Камери • Динаміки • NFC" if _is_apple(product) else "Камери • Динаміки • NFC"
+    lines.append(f"✅ Перевірений: {checks}")
 
     # Complect
     complect = _get_cf(product, "complect")
     if complect:
-        lines.append(f"📦 Комплект: {complect}")
-
+        lines.append(f"📦 Комплектація: {complect}")
     # Warranty
-    lines.append("🛡 Гарантія: 1 місяць на пристрій")
+    lines.append("🛡 Гарантія: 1 міс.")
     if _battery_replaced(product):
-        lines.append("                         6 місяців на АКБ")
+        lines.append("🔋 Гарантія на АКБ: 6 міс.")
 
-    lines.append("━━━━━━━━━━━━━━━")
-    lines.append("")
     lines.append(FOOTER)
 
     return _finalize(lines)
@@ -219,39 +208,27 @@ def _format_tablet(product: RoAppProduct, old_price: float | None = None) -> str
     screen = _get_cf(product, "screen")
     if screen:
         lines.append(f"🖥 Екран: {screen}")
-
     # Processor
     processor = _get_cf(product, "processor")
     if processor:
         lines.append(f"⚡ Процесор: {processor}")
-    lines.append("")
-
     # Camera
     camera = _get_cf(product, "camera")
     if camera:
-        lines.append(f"📸 Камера: {camera}")
-        lines.append("")
-
+        lines.append(f"📸 Камера: {_trim(camera, MAX_CAMERA_LEN)}")
     # Battery
     battery = _get_cf(product, "battery")
     if battery:
         lines.append(f"🔋 АКБ: {battery}")
-        lines.append("")
-
-    # Checked
-    lines.append("✅ Повністю перевірений:")
-    lines.append("Екран • Сенсор • Камери • Динаміки • Wi-Fi")
     lines.append("")
 
-    # Complect
+    lines.append("✅ Перевірений: Екран • Сенсор • Камери • Wi-Fi")
+
     complect = _get_cf(product, "complect")
     if complect:
-        lines.append(f"📦 Комплект: {complect}")
+        lines.append(f"📦 Комплектація: {complect}")
+    lines.append("🛡 Гарантія: 1 міс.")
 
-    lines.append("🛡 Гарантія: 1 місяць на пристрій")
-
-    lines.append("━━━━━━━━━━━━━━━")
-    lines.append("")
     lines.append(FOOTER)
 
     return _finalize(lines)
@@ -273,37 +250,24 @@ def _format_laptop(product: RoAppProduct, old_price: float | None = None) -> str
     screen = _get_cf(product, "screen")
     if screen:
         lines.append(f"🖥 Екран: {screen}")
-
     # Processor
     processor = _get_cf(product, "processor")
     if processor:
         lines.append(f"⚡ Процесор: {processor}")
-    lines.append("")
-
     # Battery
     battery = _get_cf(product, "battery")
     if battery:
         lines.append(f"🔋 АКБ: {battery}")
-        lines.append("")
-
-    # Checked
-    lines.append("✅ Повністю перевірений:")
-    lines.append("Клавіатура • Тачпад • Екран • Батарея • Порти • Wi-Fi")
     lines.append("")
 
-    # OS
+    lines.append("✅ Перевірений: Клавіатура • Тачпад • Порти • Wi-Fi")
     lines.append(f"🌐 ОС: {_detect_os(product)}")
-    lines.append("")
 
-    # Complect
     complect = _get_cf(product, "complect")
     if complect:
-        lines.append(f"📦 Комплект: {complect}")
+        lines.append(f"📦 Комплектація: {complect}")
+    lines.append("🛡 Гарантія: 1 міс.")
 
-    lines.append("🛡 Гарантія: 1 місяць на пристрій")
-
-    lines.append("━━━━━━━━━━━━━━━")
-    lines.append("")
     lines.append(FOOTER)
 
     return _finalize(lines)
@@ -329,6 +293,12 @@ def _add_condition(lines: list[str], product: RoAppProduct) -> None:
         if body_cond:
             lines.append(f" • Корпус — {body_cond}")
         lines.append("")
+
+
+def _trim(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rsplit(" ", 1)[0] + "…"
 
 
 def _finalize(lines: list[str]) -> str:

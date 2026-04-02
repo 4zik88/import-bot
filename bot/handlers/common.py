@@ -75,7 +75,7 @@ async def cmd_status(message: Message) -> None:
     lines = ["<b>Статус бота:</b>\n"]
     lines.append(f"API-токен: {'✅ налаштовано' if api_token else '❌ не налаштовано'}")
     lines.append(f"Канал: {channel_id or '❌ не налаштовано'}")
-    lines.append(f"Смартфонів опубліковано: {posted_count}")
+    lines.append(f"Товарів опубліковано: {posted_count}")
 
     if auto_enabled == "1" and auto_interval:
         label = INTERVAL_LABELS.get(auto_interval, auto_interval)
