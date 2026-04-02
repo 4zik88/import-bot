@@ -168,23 +168,30 @@ async def run_import(
 
             if new_hash != old_hash:
                 if images_changed:
-                    # Photos changed — delete old post, publish new one
-                    await delete_message(bot, ch_id, msg_id)
-                    new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None)
-                    if new_msg_id:
-                        await db.update_posted_product(
-                            sku, price=prod.price, stock=prod.stock, is_sold=False,
-                            message_id=new_msg_id, content_hash=new_hash,
-                            image_count=len(prod.images),
-                        )
-                        result.updated += 1
+                    # Photos changed — need to replace the post (can't add photos to text msg)
+                    deleted = await delete_message(bot, ch_id, msg_id)
+                    if deleted:
+                        new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None)
+                        if new_msg_id:
+                            await db.update_posted_product(
+                                sku, price=prod.price, stock=prod.stock, is_sold=False,
+                                message_id=new_msg_id, content_hash=new_hash,
+                                image_count=len(prod.images),
+                            )
+                            result.updated += 1
+                    else:
+                        # Can't delete (>48h) — at least update caption
+                        if await _update_post(bot, ch_id, msg_id, prod,
+                                              old_price=old_price if price_changed else None):
+                            await db.update_posted_product(
+                                sku, price=prod.price, stock=prod.stock, is_sold=False,
+                                content_hash="",  # keep empty so next import retries
+                            )
+                            result.updated += 1
                 else:
                     # Only text/caption changed — update in place
-                    updated = await _update_post(
-                        bot, ch_id, msg_id, prod,
-                        old_price=old_price if price_changed else None,
-                    )
-                    if updated:
+                    if await _update_post(bot, ch_id, msg_id, prod,
+                                          old_price=old_price if price_changed else None):
                         await db.update_posted_product(
                             sku, price=prod.price, stock=prod.stock, is_sold=False,
                             content_hash=new_hash,
