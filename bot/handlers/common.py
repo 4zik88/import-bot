@@ -36,6 +36,7 @@ async def cmd_start(message: Message) -> None:
         "/history — Історія імпортів\n"
         "/clear_channel — Видалити всі пости з каналу\n"
         "/reset — Скинути історію публікацій\n"
+        "/silent — Тихий режим (без сповіщень)\n"
         "/schedule — Налаштування автоімпорту\n"
         "/status — Поточний статус\n"
         "/help — Допомога",
@@ -83,4 +84,19 @@ async def cmd_status(message: Message) -> None:
     else:
         lines.append("Автоімпорт: ❌ вимкнено")
 
+    silent = (await db.get_setting("silent_mode") or "") == "1"
+    lines.append(f"Тихий режим: {'✅ увімкнено' if silent else '❌ вимкнено'}")
+
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("silent"))
+async def cmd_silent(message: Message) -> None:
+    from bot import db
+    current = (await db.get_setting("silent_mode") or "") == "1"
+    new_val = "0" if current else "1"
+    await db.set_setting("silent_mode", new_val)
+    if new_val == "1":
+        await message.answer("🔕 Тихий режим увімкнено — пости без сповіщень")
+    else:
+        await message.answer("🔔 Тихий режим вимкнено — пости зі сповіщеннями")

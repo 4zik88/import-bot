@@ -22,14 +22,15 @@ async def publish_media_group(
     bot: Bot,
     channel_id: str,
     media: list[InputMediaPhoto],
+    silent: bool = False,
 ) -> list[Message] | None:
     try:
-        messages = await bot.send_media_group(chat_id=channel_id, media=media)
+        messages = await bot.send_media_group(chat_id=channel_id, media=media, disable_notification=silent)
         await asyncio.sleep(SEND_DELAY)
         return messages
     except TelegramRetryAfter as e:
         await _handle_retry(e)
-        return await publish_media_group(bot, channel_id, media)
+        return await publish_media_group(bot, channel_id, media, silent=silent)
     except Exception as e:
         logger.error("Error publishing to channel %s: %s", channel_id, e)
         return None
@@ -39,17 +40,19 @@ async def publish_text(
     bot: Bot,
     channel_id: str,
     text: str,
+    silent: bool = False,
 ) -> Message | None:
     try:
         msg = await bot.send_message(
             chat_id=channel_id, text=text, parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=True),
+            disable_notification=silent,
         )
         await asyncio.sleep(SEND_DELAY)
         return msg
     except TelegramRetryAfter as e:
         await _handle_retry(e)
-        return await publish_text(bot, channel_id, text)
+        return await publish_text(bot, channel_id, text, silent=silent)
     except Exception as e:
         logger.error("Error publishing text to channel %s: %s", channel_id, e)
         return None

@@ -116,6 +116,7 @@ async def run_import(
         await db.finish_import_log(log_id, 0, 0, 0, 0, "error")
         raise ValueError("API-токен або канал не налаштовані. /setup")
 
+    silent = (await db.get_setting("silent_mode") or "") == "1"
     client = RoAppClient(api_token)
     try:
         # Load all category trees (smartphones, tablets, laptops)
@@ -171,7 +172,7 @@ async def run_import(
                     # Photos changed — need to replace the post (can't add photos to text msg)
                     deleted = await delete_message(bot, ch_id, msg_id)
                     if deleted:
-                        new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None)
+                        new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None, silent=silent)
                         if new_msg_id:
                             await db.update_posted_product(
                                 sku, price=prod.price, stock=prod.stock, is_sold=False,
@@ -207,7 +208,7 @@ async def run_import(
                     result.skipped += 1
                     continue
 
-                new_msg_id = await _publish_product(bot, channel_id, product)
+                new_msg_id = await _publish_product(bot, channel_id, product, silent=silent)
                 if new_msg_id:
                     await db.add_posted_product(
                         sku=product.sku, roapp_id=product.id,
@@ -240,16 +241,16 @@ async def run_import(
 
 async def _publish_product(
     bot: Bot, channel_id: str, product: RoAppProduct,
-    old_price: float | None = None,
+    old_price: float | None = None, silent: bool = False,
 ) -> str | None:
     """Publish a product and return the message_id, or None on failure."""
     media = await build_media_group(product, old_price=old_price)
     if media:
-        messages = await publish_media_group(bot, channel_id, media)
+        messages = await publish_media_group(bot, channel_id, media, silent=silent)
         return str(messages[0].message_id) if messages else None
     else:
         caption = format_caption(product, old_price=old_price)
-        msg = await publish_text(bot, channel_id, caption)
+        msg = await publish_text(bot, channel_id, caption, silent=silent)
         return str(msg.message_id) if msg else None
 
 
