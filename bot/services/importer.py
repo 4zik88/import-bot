@@ -79,6 +79,16 @@ async def _load_smartphone_categories(client: RoAppClient) -> set[str]:
     return trees.get(CAT_SMARTPHONES, set())
 
 
+async def _delete_all_messages(bot: Bot, channel_id: str, message_id: str) -> bool:
+    """Delete all messages of a media group (comma-separated IDs)."""
+    ids = [mid.strip() for mid in message_id.split(",") if mid.strip()]
+    ok = False
+    for mid in ids:
+        if await delete_message(bot, channel_id, mid):
+            ok = True
+    return ok
+
+
 class ImportResult:
     def __init__(self) -> None:
         self.found = 0
@@ -153,7 +163,7 @@ async def run_import(
 
             prod = current_skus.get(sku)
             if not prod or prod.stock <= 0:
-                deleted = await delete_message(bot, ch_id, msg_id)
+                deleted = await _delete_all_messages(bot, ch_id, msg_id)
                 if deleted:
                     await db.delete_posted_product(sku)
                     result.removed += 1
@@ -170,7 +180,7 @@ async def run_import(
             if new_hash != old_hash:
                 if images_changed:
                     # Photos changed — need to replace the post (can't add photos to text msg)
-                    deleted = await delete_message(bot, ch_id, msg_id)
+                    deleted = await _delete_all_messages(bot, ch_id, msg_id)
                     if deleted:
                         new_msg_id = await _publish_product(bot, channel_id, prod, old_price if price_changed else None, silent=silent)
                         if new_msg_id:
@@ -182,7 +192,8 @@ async def run_import(
                             result.updated += 1
                     else:
                         # Can't delete (>48h) — at least update caption
-                        if await _update_post(bot, ch_id, msg_id, prod,
+                        first_msg_id = msg_id.split(",")[0].strip()
+                        if await _update_post(bot, ch_id, first_msg_id, prod,
                                               old_price=old_price if price_changed else None):
                             await db.update_posted_product(
                                 sku, price=prod.price, stock=prod.stock, is_sold=False,
@@ -191,7 +202,8 @@ async def run_import(
                             result.updated += 1
                 else:
                     # Only text/caption changed — update in place
-                    if await _update_post(bot, ch_id, msg_id, prod,
+                    first_msg_id = msg_id.split(",")[0].strip()
+                    if await _update_post(bot, ch_id, first_msg_id, prod,
                                           old_price=old_price if price_changed else None):
                         await db.update_posted_product(
                             sku, price=prod.price, stock=prod.stock, is_sold=False,
@@ -243,11 +255,13 @@ async def _publish_product(
     bot: Bot, channel_id: str, product: RoAppProduct,
     old_price: float | None = None, silent: bool = False,
 ) -> str | None:
-    """Publish a product and return the message_id, or None on failure."""
+    """Publish a product and return message_id(s), comma-separated for media groups."""
     media = await build_media_group(product, old_price=old_price)
     if media:
         messages = await publish_media_group(bot, channel_id, media, silent=silent)
-        return str(messages[0].message_id) if messages else None
+        if messages:
+            return ",".join(str(m.message_id) for m in messages)
+        return None
     else:
         caption = format_caption(product, old_price=old_price)
         msg = await publish_text(bot, channel_id, caption, silent=silent)

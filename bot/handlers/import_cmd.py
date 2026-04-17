@@ -6,7 +6,7 @@ from aiogram.types import Message
 
 from bot import db
 from bot.services.importer import run_import
-from bot.telegram.publisher import delete_message
+from bot.services.importer import _delete_all_messages
 
 router = Router()
 
@@ -168,7 +168,7 @@ async def process_clear_channel(callback: types.CallbackQuery) -> None:
             ch_id = pp.get("channel_id")
             sku = pp.get("sku", "")
             if msg_id and ch_id:
-                ok = await delete_message(callback.bot, ch_id, msg_id)
+                ok = await _delete_all_messages(callback.bot, ch_id, msg_id)
                 if ok:
                     deleted += 1
                 else:
