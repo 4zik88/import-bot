@@ -10,7 +10,7 @@ from bot.roapp.client import RoAppClient
 from bot.roapp.models import RoAppProduct
 from bot.telegram.formatter import (
     CAT_LAPTOPS, CAT_SMARTPHONES, CAT_TABLETS,
-    build_media_group, format_caption, set_category_tree,
+    build_media_group, format_caption, format_sold_caption, set_category_tree,
 )
 from bot.telegram.publisher import delete_message, edit_caption, edit_text, publish_media_group, publish_text
 
@@ -163,10 +163,21 @@ async def run_import(
 
             prod = current_skus.get(sku)
             if not prod or prod.stock <= 0:
+                if pp.get("is_sold"):
+                    # Already marked as sold previously — skip
+                    continue
                 deleted = await _delete_all_messages(bot, ch_id, msg_id)
                 if deleted:
                     await db.delete_posted_product(sku)
                     result.removed += 1
+                else:
+                    # Can't delete (>48h) — mark caption as SOLD
+                    first_msg_id = msg_id.split(",")[0].strip()
+                    sold_caption = format_sold_caption(pp.get("name") or "")
+                    if await edit_caption(bot, ch_id, first_msg_id, sold_caption) \
+                       or await edit_text(bot, ch_id, first_msg_id, sold_caption):
+                        await db.update_posted_product(sku, is_sold=True, content_hash="")
+                        result.removed += 1
                 continue
 
             # Check if anything changed (price, photos, custom fields, etc.)

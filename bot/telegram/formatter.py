@@ -105,6 +105,18 @@ def _battery_replaced(product: RoAppProduct) -> bool:
     return any(kw in battery.lower() for kw in ["замін", "нова", "замен", "replace"]) if battery else False
 
 
+def format_sold_caption(name: str) -> str:
+    """Caption for posts whose product was sold but can't be deleted (>48h)."""
+    lines = [
+        "❌ <b>ПРОДАНО</b>",
+        "",
+        f"<s>{_escape(name)}</s>",
+        "",
+        FOOTER,
+    ]
+    return "\n".join(lines)
+
+
 def format_caption(product: RoAppProduct, old_price: float | None = None) -> str:
     ptype = _detect_product_type(product)
     if ptype == CAT_LAPTOPS:
