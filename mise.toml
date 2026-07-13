@@ -1,0 +1,9 @@
+# Railway/Railpack builds Python via mise. mise verifies GitHub artifact
+# attestations for the Python download, which intermittently fails in the
+# build environment ("No GitHub artifact attestations"). Disabling that
+# verification keeps deploys from breaking on GitHub attestation-API hiccups.
+[tools]
+python = "3.12.8"
+
+[settings]
+python.github_attestations = false
