@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from aiogram import Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from bot import db
+from bot.config import settings
 from bot.services.importer import run_import
 from bot.services.importer import _delete_all_messages
 
@@ -71,6 +72,55 @@ async def process_import_callback(callback: types.CallbackQuery) -> None:
             await callback.message.edit_text(f"Ошибка: {e}")
         except Exception as e:
             await callback.message.edit_text(f"Ошибка импорта: {e}")
+
+
+@router.message(Command("unpost"))
+async def cmd_unpost(message: Message, command: CommandObject) -> None:
+    # Destructive single-item command — gate to admins explicitly.
+    if message.from_user and message.from_user.id not in settings.all_admin_ids:
+        return
+
+    args = (command.args or "").strip()
+    if not args:
+        await message.answer(
+            "Вкажіть артикул товару:\n<code>/unpost 354633442377511</code>\n\n"
+            "Прибирає товар з бази публікацій (і видаляє його пост з каналу, якщо він ще є), "
+            "щоб наступний /import опублікував його заново.",
+            parse_mode="HTML",
+        )
+        return
+
+    sku = args.split()[0]
+    pp = await db.get_posted_product(sku)
+    if not pp:
+        await message.answer(
+            f"Товар з артикулом <code>{sku}</code> не знайдено серед опублікованих.\n"
+            "Якщо він є в наявності — його опублікує звичайний /import.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Best-effort: delete the existing channel post first, so re-import can't
+    # create a duplicate. If the post is already gone, this simply fails quietly.
+    msg_id = pp.get("message_id")
+    ch_id = pp.get("channel_id")
+    post_deleted = False
+    if msg_id and ch_id:
+        post_deleted = await _delete_all_messages(message.bot, ch_id, msg_id)
+
+    await db.delete_posted_product(sku)
+
+    note = (
+        "Старий пост видалено з каналу. " if post_deleted
+        else "Пост у каналі не знайдено (мабуть, уже видалений). "
+    )
+    await message.answer(
+        f"✅ <b>{pp.get('name', '')}</b>\n"
+        f"Артикул <code>{sku}</code> прибрано з бази публікацій.\n"
+        f"{note}\n"
+        f"Запустіть /import — товар буде опубліковано заново.",
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("history"))

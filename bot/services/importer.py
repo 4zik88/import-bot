@@ -12,7 +12,10 @@ from bot.telegram.formatter import (
     CAT_LAPTOPS, CAT_SMARTPHONES, CAT_TABLETS,
     build_media_group, format_caption, format_sold_caption, set_category_tree,
 )
-from bot.telegram.publisher import delete_message, edit_caption, edit_text, publish_media_group, publish_text
+from bot.telegram.publisher import (
+    delete_message, edit_caption, edit_text, message_exists,
+    publish_media_group, publish_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,7 @@ class ImportResult:
         self.skipped = 0
         self.updated = 0
         self.removed = 0
+        self.restored = 0
         self.errors = 0
 
     @property
@@ -104,6 +108,7 @@ class ImportResult:
             f"Знайдено: {self.found}",
             f"Опубліковано: {self.posted}",
             f"Оновлено: {self.updated}",
+            f"Відновлено: {self.restored}",
             f"Видалено (продано): {self.removed}",
             f"Пропущено: {self.skipped}",
             f"Помилок: {self.errors}",
@@ -180,10 +185,28 @@ async def run_import(
                         result.removed += 1
                 continue
 
+            # Auto-heal: if the channel post was deleted by hand, re-publish it.
+            # We only act on an explicit "message not found" — never on a generic
+            # error — so a live post is never duplicated. The DB row is UPDATED
+            # (never deleted), so no product ever disappears from the database.
+            first_msg_id = msg_id.split(",")[0].strip()
+            new_hash = _product_hash(prod)
+            if await message_exists(bot, ch_id, first_msg_id) is False:
+                new_msg_id = await _publish_product(bot, channel_id, prod, silent=silent)
+                if new_msg_id:
+                    await db.update_posted_product(
+                        sku, price=prod.price, stock=prod.stock, is_sold=False,
+                        message_id=new_msg_id, content_hash=new_hash,
+                        image_count=len(prod.images),
+                    )
+                    result.restored += 1
+                else:
+                    result.errors += 1
+                continue
+
             # Check if anything changed (price, photos, custom fields, etc.)
             old_hash = pp.get("content_hash") or ""
             old_image_count = pp.get("image_count") or 0
-            new_hash = _product_hash(prod)
             old_price = pp.get("price") or 0
             price_changed = abs(old_price - prod.price) > 0.01
             images_changed = len(prod.images) != old_image_count

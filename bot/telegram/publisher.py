@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import InputMediaPhoto, LinkPreviewOptions, Message
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,37 @@ async def delete_message(bot: Bot, channel_id: str, message_id: str) -> bool:
     except Exception as e:
         logger.warning("Could not delete message %s: %s", message_id, e)
         return False
+
+
+async def message_exists(bot: Bot, channel_id: str, message_id: str) -> bool | None:
+    """Best-effort check whether a channel message still exists.
+
+    Returns True (exists), False (confirmed deleted), or None (unknown — caller
+    must treat as "exists" to stay safe). Probes with a no-op reply-markup edit:
+    the bot's channel posts never carry an inline keyboard, so this makes no
+    visible change and sends no notification — it just asks Telegram whether the
+    message is there. We only return False on an explicit "message not found",
+    never on generic errors, so auto-heal can never re-post over a live message.
+    """
+    try:
+        await bot.edit_message_reply_markup(chat_id=channel_id, message_id=int(message_id))
+        return True
+    except TelegramRetryAfter as e:
+        await _handle_retry(e)
+        return await message_exists(bot, channel_id, message_id)
+    except TelegramBadRequest as e:
+        text = str(e).lower()
+        # Chat-level problems say nothing about this specific message — stay safe.
+        if "chat not found" in text or "blocked" in text or "not enough rights" in text:
+            return None
+        if "message to edit not found" in text or "message_id_invalid" in text \
+           or "message identifier is not specified" in text:
+            return False
+        # "message is not modified", "message can't be edited", etc. -> it exists.
+        return True
+    except Exception as e:
+        logger.warning("Existence probe failed for message %s: %s", message_id, e)
+        return None
 
 
 async def edit_caption(bot: Bot, channel_id: str, message_id: str, caption: str) -> bool:
