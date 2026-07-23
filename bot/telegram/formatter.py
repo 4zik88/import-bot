@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import aiohttp
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 
@@ -338,15 +340,19 @@ def _format_price(price: float) -> str:
     return f"{price:,.2f}".replace(",", " ")
 
 
-async def download_image(url: str) -> bytes | None:
+async def _download_with_session(session: aiohttp.ClientSession, url: str) -> bytes | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 200:
-                    return await resp.read()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 200:
+                return await resp.read()
     except Exception:
         pass
     return None
+
+
+async def download_image(url: str) -> bytes | None:
+    async with aiohttp.ClientSession() as session:
+        return await _download_with_session(session, url)
 
 
 async def build_media_group(product: RoAppProduct, old_price: float | None = None) -> list[InputMediaPhoto] | None:
@@ -354,18 +360,27 @@ async def build_media_group(product: RoAppProduct, old_price: float | None = Non
         return None
 
     caption = format_caption(product, old_price=old_price)
-    media: list[InputMediaPhoto] = []
 
-    for i, url in enumerate(product.images[:10]):
-        data = await download_image(url)
+    # Download all photos concurrently over one shared session — the order of
+    # results (and thus of photos in the post) still matches product.images.
+    urls = product.images[:10]
+    async with aiohttp.ClientSession() as session:
+        downloads = await asyncio.gather(
+            *(_download_with_session(session, url) for url in urls)
+        )
+
+    media: list[InputMediaPhoto] = []
+    for i, data in enumerate(downloads):
         if data is None:
             continue
         filename = f"{product.sku or product.id}_{i}.jpg"
         file = BufferedInputFile(data, filename=filename)
+        # Caption goes on the first photo that actually downloaded.
+        first = not media
         media.append(InputMediaPhoto(
             media=file,
-            caption=caption if i == 0 else None,
-            parse_mode="HTML" if i == 0 else None,
+            caption=caption if first else None,
+            parse_mode="HTML" if first else None,
         ))
 
     return media if media else None

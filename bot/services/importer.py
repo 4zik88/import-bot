@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 
@@ -159,6 +160,31 @@ async def run_import(
 
         # Check previously posted products — remove sold ones, update prices
         posted = await db.get_all_posted_products()
+
+        # Pre-flight for auto-heal: probe post existence for all in-stock
+        # products concurrently (in small batches) instead of one-by-one in
+        # the loop below. Same read-only probes, same results — just faster.
+        probe_targets: list[tuple[str, str, str]] = []
+        for pp in posted:
+            sku = pp.get("sku", "")
+            msg_id = pp.get("message_id")
+            ch_id = pp.get("channel_id")
+            if not sku or not msg_id or not ch_id:
+                continue
+            prod = current_skus.get(sku)
+            if prod and prod.stock > 0:
+                probe_targets.append((sku, ch_id, msg_id.split(",")[0].strip()))
+
+        exists_map: dict[str, bool | None] = {}
+        PROBE_BATCH = 10
+        for i in range(0, len(probe_targets), PROBE_BATCH):
+            batch = probe_targets[i:i + PROBE_BATCH]
+            probes = await asyncio.gather(
+                *(message_exists(bot, ch, mid) for _sku, ch, mid in batch)
+            )
+            for (sku, _ch, _mid), res in zip(batch, probes):
+                exists_map[sku] = res
+
         for pp in posted:
             sku = pp.get("sku", "")
             msg_id = pp.get("message_id")
@@ -191,7 +217,7 @@ async def run_import(
             # (never deleted), so no product ever disappears from the database.
             first_msg_id = msg_id.split(",")[0].strip()
             new_hash = _product_hash(prod)
-            if await message_exists(bot, ch_id, first_msg_id) is False:
+            if exists_map.get(sku) is False:
                 new_msg_id = await _publish_product(bot, channel_id, prod, silent=silent)
                 if new_msg_id:
                     await db.update_posted_product(
