@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 
@@ -121,7 +120,19 @@ async def run_import(
     bot: Bot,
     trigger_type: str = "manual",
     progress_callback=None,
+    heal: bool = False,
 ) -> ImportResult:
+    """Run an import.
+
+    heal=False (normal /import): fast path — publish new products, update
+    changed ones, mark sold ones. Does NOT probe the channel for hand-deleted
+    posts, because that costs one Telegram edit per posted product and is
+    rate-limit-heavy on a single channel.
+
+    heal=True (the /heal command): additionally sweeps every posted in-stock
+    product to detect posts deleted by hand and re-publish them. Slow and
+    rate-limit-heavy by nature — run it on demand, not on every import.
+    """
     result = ImportResult()
     log_id = await db.create_import_log(trigger_type)
 
@@ -160,30 +171,27 @@ async def run_import(
 
         # Check previously posted products — remove sold ones, update prices
         posted = await db.get_all_posted_products()
+        posted_skus = {pp.get("sku") for pp in posted if pp.get("sku")}
 
-        # Pre-flight for auto-heal: probe post existence for all in-stock
-        # products concurrently (in small batches) instead of one-by-one in
-        # the loop below. Same read-only probes, same results — just faster.
-        probe_targets: list[tuple[str, str, str]] = []
-        for pp in posted:
-            sku = pp.get("sku", "")
-            msg_id = pp.get("message_id")
-            ch_id = pp.get("channel_id")
-            if not sku or not msg_id or not ch_id:
-                continue
-            prod = current_skus.get(sku)
-            if prod and prod.stock > 0:
-                probe_targets.append((sku, ch_id, msg_id.split(",")[0].strip()))
-
+        # Auto-heal existence probes are EXPENSIVE: each is a Telegram edit call,
+        # and Telegram throttles edits to a single channel hard, so probing every
+        # posted product costs minutes and is rate-limit-heavy. So we only run the
+        # sweep on demand (heal=True, the /heal command), never on a normal import.
+        # Probes are sequential ON PURPOSE — firing them in parallel makes Telegram
+        # 429 the whole batch at once, and they then retry in lockstep, creating a
+        # self-perpetuating rate-limit storm (~200 "sleeping 8s" warnings observed).
         exists_map: dict[str, bool | None] = {}
-        PROBE_BATCH = 10
-        for i in range(0, len(probe_targets), PROBE_BATCH):
-            batch = probe_targets[i:i + PROBE_BATCH]
-            probes = await asyncio.gather(
-                *(message_exists(bot, ch, mid) for _sku, ch, mid in batch)
-            )
-            for (sku, _ch, _mid), res in zip(batch, probes):
-                exists_map[sku] = res
+        if heal:
+            for pp in posted:
+                sku = pp.get("sku", "")
+                msg_id = pp.get("message_id")
+                ch_id = pp.get("channel_id")
+                if not sku or not msg_id or not ch_id:
+                    continue
+                prod = current_skus.get(sku)
+                if prod and prod.stock > 0:
+                    first_msg_id = msg_id.split(",")[0].strip()
+                    exists_map[sku] = await message_exists(bot, ch_id, first_msg_id)
 
         for pp in posted:
             sku = pp.get("sku", "")
@@ -276,7 +284,7 @@ async def run_import(
             if not product.sku or product.stock <= 0:
                 continue
             try:
-                if await db.is_product_posted(product.sku):
+                if product.sku in posted_skus:
                     result.skipped += 1
                     continue
 

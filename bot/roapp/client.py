@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.roapp.io"
 PER_PAGE = 50
-MAX_PAGES = 200
+# 50 items/page × MAX_PAGES = hard ceiling on how many goods we ever fetch.
+# Keep well above the real catalog size so growth is never silently truncated
+# (200 pages = 10 000 items would cut a 10k+ catalog off at exactly the cap).
+MAX_PAGES = 1000
 
 
 def _get_value(item: dict, keys: list[str]) -> Any:

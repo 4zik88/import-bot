@@ -123,6 +123,37 @@ async def cmd_unpost(message: Message, command: CommandObject) -> None:
     )
 
 
+@router.message(Command("heal"))
+async def cmd_heal(message: Message) -> None:
+    # Full existence sweep — probes every posted product, so it's slow and
+    # rate-limit-heavy. Gate to admins and warn before starting.
+    if message.from_user and message.from_user.id not in settings.all_admin_ids:
+        return
+
+    api_token = await db.get_setting("roapp_api_token")
+    channel_id = await db.get_setting("channel_id")
+    if not api_token or not channel_id:
+        await message.answer("Спочатку налаштуйте бота: /setup")
+        return
+
+    posted = await db.get_posted_products_count()
+    status = await message.answer(
+        f"🔧 Перевіряю всі пости в каналі ({posted} шт.) і відновлюю видалені вручну.\n"
+        f"Це повільна операція (Telegram обмежує запити) — зачекайте кілька хвилин…"
+    )
+
+    try:
+        result = await run_import(message.bot, trigger_type="manual", heal=True)
+        await status.edit_text(
+            f"<b>Перевірку завершено!</b>\n\n{result.summary}",
+            parse_mode="HTML",
+        )
+    except ValueError as e:
+        await status.edit_text(f"Помилка: {e}")
+    except Exception as e:
+        await status.edit_text(f"Помилка перевірки: {e}")
+
+
 @router.message(Command("history"))
 async def cmd_history(message: Message) -> None:
     history = await db.get_import_history(10)
