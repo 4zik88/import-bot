@@ -12,6 +12,7 @@ from bot.db import init_db
 from bot.handlers import get_root_router
 from bot.handlers.schedule import set_scheduler
 from bot.services.scheduler import Scheduler
+from bot.telegram.templates import load_templates
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     await init_db()
+    await load_templates()
 
     bot = Bot(
         token=settings.bot_token,
