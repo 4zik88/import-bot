@@ -6,6 +6,10 @@ import aiohttp
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 
 from bot.roapp.models import RoAppProduct
+from bot.telegram.templates import (
+    KIND_FOOTER, KIND_LAPTOP, KIND_SMARTPHONE, KIND_TABLET,
+    close_open_tags, get_template, render,
+)
 
 MAX_CAPTION = 1024
 
@@ -30,16 +34,6 @@ FIELD_MAP = {
 
 # All category IDs loaded at runtime (filled by importer)
 _all_cat_ids: dict[str, set[str]] = {}
-
-TELEGRAM_CONTACT = "https://t.me/sotik_ua"
-
-FOOTER = (
-    "━━━━━━━━━━━━━━━\n"
-    '🔧 Ремонт • 📱 Продаж • ♻️ Обмін • Викуп\n'
-    '🌐 <a href="https://sotik.in.ua">SOTIK.in.ua</a> - Ціни нижче ніж задарма!\n'
-    "📍 Козятин, Героїв Майдану 20\n"
-    f'📞 <a href="{TELEGRAM_CONTACT}">097 985 09 92</a>'
-)
 
 MAX_CAMERA_LEN = 120
 
@@ -114,199 +108,81 @@ def format_sold_caption(name: str) -> str:
         "",
         f"<s>{_escape(name)}</s>",
         "",
-        FOOTER,
+        get_template(KIND_FOOTER),
     ]
     return "\n".join(lines)
 
 
+_KIND_BY_CATEGORY = {
+    CAT_SMARTPHONES: KIND_SMARTPHONE,
+    CAT_TABLETS: KIND_TABLET,
+    CAT_LAPTOPS: KIND_LAPTOP,
+}
+
+
+def detect_kind(product: RoAppProduct) -> str:
+    return _KIND_BY_CATEGORY.get(_detect_product_type(product), KIND_SMARTPHONE)
+
+
 def format_caption(product: RoAppProduct, old_price: float | None = None) -> str:
-    ptype = _detect_product_type(product)
-    if ptype == CAT_LAPTOPS:
-        return _format_laptop(product, old_price)
-    elif ptype == CAT_TABLETS:
-        return _format_tablet(product, old_price)
-    else:
-        return _format_smartphone(product, old_price)
+    return render_caption(detect_kind(product), product, old_price)
 
 
-def _format_smartphone(product: RoAppProduct, old_price: float | None = None) -> str:
-    lines: list[str] = []
+def render_caption(
+    kind: str, product: RoAppProduct, old_price: float | None = None,
+    template: str | None = None, footer: str | None = None,
+) -> str:
+    """Render a post caption; ``template``/``footer`` override the saved ones (for previews)."""
+    body = render(
+        template if template is not None else get_template(kind),
+        _template_values(product, old_price),
+        _template_flags(product),
+    )
+    return _finalize(body, footer if footer is not None else get_template(KIND_FOOTER))
 
-    # Title
-    lines.append(f"✅ {_escape(product.name)} ✅")
-    lines.append("")
 
-    # Price
-    lines.append(_price_line(product, old_price))
-    lines.append("")
-
-    # Version & SIM — only for Apple
-    if _is_apple(product):
-        if _is_usa(product):
-            lines.append("🌍 Версія: США")
-            lines.append("📶 SIM: тільки eSIM (без фізичної SIM)")
-        else:
-            lines.append("🌍 Версія: Європа")
-            lines.append("📶 SIM: 1 фізична SIM + eSIM")
-        lines.append("🔓 Neverlock (працює з будь-яким оператором)")
-        lines.append("🔒 iCloud: чистий")
-    else:
-        lines.append("🔒 Google акаунт: чистий")
-    lines.append("")
-
-    # Condition
-    _add_condition(lines, product)
-
-    # Screen
-    screen = _get_cf(product, "screen")
-    if screen:
-        lines.append(f"🖥 Екран: {screen}")
-    # Processor
-    processor = _get_cf(product, "processor")
-    if processor:
-        lines.append(f"⚡ Процесор: {processor}")
-    # Camera
+def _template_values(product: RoAppProduct, old_price: float | None) -> dict[str, str]:
     camera = _get_cf(product, "camera")
-    if camera:
-        lines.append(f"📸 Камера: {_trim(camera, MAX_CAMERA_LEN)}")
-    # Battery
-    battery = _get_cf(product, "battery")
-    if battery:
-        lines.append(f"🔋 АКБ: {battery}")
-    lines.append("")
-
-    # Checked
-    checks = "Face ID • Камери • Динаміки • NFC" if _is_apple(product) else "Камери • Динаміки • NFC"
-    lines.append(f"✅ Перевірений: {checks}")
-
-    # Complect
-    complect = _get_cf(product, "complect")
-    if complect:
-        lines.append(f"📦 Комплектація: {complect}")
-    # Warranty
-    lines.append("🛡 Гарантія: 1 міс.")
-    if _battery_replaced(product):
-        lines.append("🔋 Гарантія на АКБ: 6 міс.")
-
-    lines.append(FOOTER)
-
-    return _finalize(lines)
+    values = {
+        "name": product.name,
+        "screen": _get_cf(product, "screen"),
+        "processor": _get_cf(product, "processor"),
+        "camera": _trim(camera, MAX_CAMERA_LEN) if camera else "",
+        "battery": _get_cf(product, "battery"),
+        "complect": _get_cf(product, "complect"),
+        "screen_condition": _get_cf(product, "screen_condition"),
+        "body_condition": _get_cf(product, "body_condition"),
+        "os": _detect_os(product),
+    }
+    values = {k: _escape(v) for k, v in values.items()}
+    values["price"] = _price_value(product, old_price)
+    return values
 
 
-def _format_tablet(product: RoAppProduct, old_price: float | None = None) -> str:
-    lines: list[str] = []
-
-    lines.append(f"✅ {_escape(product.name)} ✅")
-    lines.append("")
-
-    lines.append(_price_line(product, old_price))
-    lines.append("")
-
-    # SIM / WiFi
-    if _has_lte(product):
-        lines.append("📶 SIM: LTE (SIM)")
-    else:
-        lines.append("📶 SIM: WiFi only")
-
-    # iCloud / Google
-    if _is_apple(product):
-        lines.append("🔒 iCloud: чистий")
-    else:
-        lines.append("🔒 Google акаунт: чистий")
-    lines.append("")
-
-    # Condition
-    _add_condition(lines, product)
-
-    # Screen
-    screen = _get_cf(product, "screen")
-    if screen:
-        lines.append(f"🖥 Екран: {screen}")
-    # Processor
-    processor = _get_cf(product, "processor")
-    if processor:
-        lines.append(f"⚡ Процесор: {processor}")
-    # Camera
-    camera = _get_cf(product, "camera")
-    if camera:
-        lines.append(f"📸 Камера: {_trim(camera, MAX_CAMERA_LEN)}")
-    # Battery
-    battery = _get_cf(product, "battery")
-    if battery:
-        lines.append(f"🔋 АКБ: {battery}")
-    lines.append("")
-
-    lines.append("✅ Перевірений: Екран • Сенсор • Камери • Wi-Fi")
-
-    complect = _get_cf(product, "complect")
-    if complect:
-        lines.append(f"📦 Комплектація: {complect}")
-    lines.append("🛡 Гарантія: 1 міс.")
-
-    lines.append(FOOTER)
-
-    return _finalize(lines)
-
-
-def _format_laptop(product: RoAppProduct, old_price: float | None = None) -> str:
-    lines: list[str] = []
-
-    lines.append(f"✅ {_escape(product.name)} ✅")
-    lines.append("")
-
-    lines.append(_price_line(product, old_price))
-    lines.append("")
-
-    # Condition
-    _add_condition(lines, product)
-
-    # Screen
-    screen = _get_cf(product, "screen")
-    if screen:
-        lines.append(f"🖥 Екран: {screen}")
-    # Processor
-    processor = _get_cf(product, "processor")
-    if processor:
-        lines.append(f"⚡ Процесор: {processor}")
-    # Battery
-    battery = _get_cf(product, "battery")
-    if battery:
-        lines.append(f"🔋 АКБ: {battery}")
-    lines.append("")
-
-    lines.append("✅ Перевірений: Клавіатура • Тачпад • Порти • Wi-Fi")
-    lines.append(f"🌐 ОС: {_detect_os(product)}")
-
-    complect = _get_cf(product, "complect")
-    if complect:
-        lines.append(f"📦 Комплектація: {complect}")
-    lines.append("🛡 Гарантія: 1 міс.")
-
-    lines.append(FOOTER)
-
-    return _finalize(lines)
+def _template_flags(product: RoAppProduct) -> dict[str, bool]:
+    apple = _is_apple(product)
+    usa = _is_usa(product)
+    lte = _has_lte(product)
+    return {
+        "Apple": apple,
+        "Android": not apple,
+        "США": apple and usa,
+        "Європа": apple and not usa,
+        "LTE": lte,
+        "WiFi": not lte,
+        "Стан": bool(_get_cf(product, "screen_condition") or _get_cf(product, "body_condition")),
+        "Нова АКБ": _battery_replaced(product),
+    }
 
 
 # --- Helpers ---
 
-def _price_line(product: RoAppProduct, old_price: float | None) -> str:
+def _price_value(product: RoAppProduct, old_price: float | None) -> str:
     if old_price and abs(old_price - product.price) > 0.01 and product.price > 0:
-        return f"💸 Ціна: <s>{_format_price(old_price)} грн</s> → {_format_price(product.price)} грн"
+        return f"<s>{_format_price(old_price)} грн</s> → {_format_price(product.price)} грн"
     elif product.price > 0:
-        return f"💸 Ціна: {_format_price(product.price)} грн"
+        return f"{_format_price(product.price)} грн"
     return ""
-
-
-def _add_condition(lines: list[str], product: RoAppProduct) -> None:
-    screen_cond = _get_cf(product, "screen_condition")
-    body_cond = _get_cf(product, "body_condition")
-    if screen_cond or body_cond:
-        lines.append("💯 Стан:")
-        if screen_cond:
-            lines.append(f" • Екран — {screen_cond}")
-        if body_cond:
-            lines.append(f" • Корпус — {body_cond}")
-        lines.append("")
 
 
 def _trim(text: str, max_len: int) -> str:
@@ -315,19 +191,15 @@ def _trim(text: str, max_len: int) -> str:
     return text[:max_len].rsplit(" ", 1)[0] + "…"
 
 
-def _finalize(lines: list[str]) -> str:
-    caption = "\n".join(lines)
-    if len(caption) > MAX_CAPTION:
-        caption = _truncate(caption)
-    return caption
-
-
-def _truncate(text: str) -> str:
-    if len(text) <= MAX_CAPTION:
-        return text
-    footer_line = "\n━━━━━━━━━━━━━━━\n" + FOOTER
-    available = MAX_CAPTION - len(footer_line) - 3
-    return text[:available].rsplit("\n", 1)[0] + "..." + footer_line
+def _finalize(body: str, footer: str) -> str:
+    caption = f"{body}\n{footer}" if body else footer
+    if len(caption) <= MAX_CAPTION:
+        return caption
+    # Too long: cut the body at a line break and keep the footer intact.
+    tail = "\n" + footer
+    available = MAX_CAPTION - len(tail) - 3
+    cut = body[:max(available, 0)].rsplit("\n", 1)[0]
+    return close_open_tags(cut) + "..." + tail
 
 
 def _escape(text: str) -> str:
