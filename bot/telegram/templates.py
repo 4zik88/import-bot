@@ -13,6 +13,7 @@ rendering stays synchronous.
 """
 from __future__ import annotations
 
+import html
 import re
 
 from bot import db
@@ -151,8 +152,11 @@ DEFAULT_TEMPLATES: dict[str, str] = {
     ),
 }
 
+# Limits on visible text (markup such as premium emoji or links is not counted).
 MAX_TEMPLATE_LEN = 3000
 MAX_FOOTER_LEN = 500
+# Hard cap on the stored HTML, which can be much longer than the visible text.
+MAX_RAW_LEN = 20000
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}\n]*)\}")
 # Leading HTML markup, then one or more [Tag] markers, then optional spaces.
@@ -194,6 +198,13 @@ async def reset_template(kind: str) -> None:
     _cache.pop(kind, None)
 
 
+def visible_length(text: str) -> int:
+    """Length of HTML text as Telegram counts it: tags stripped, entities
+    decoded, measured in UTF-16 code units (most emoji count as 2)."""
+    plain = html.unescape(_HTML_TAG_RE.sub("", text))
+    return len(plain.encode("utf-16-le")) // 2
+
+
 def _canonical_tag(raw: str) -> str | None:
     return TAG_ALIASES.get(" ".join(raw.lower().split()))
 
@@ -207,8 +218,9 @@ def validate_template(kind: str, text: str) -> tuple[list[str], list[str]]:
         return ["Шаблон порожній."], warnings
 
     if kind == KIND_FOOTER:
-        if len(text) > MAX_FOOTER_LEN:
-            errors.append(f"Підвал задовгий ({len(text)} симв.), максимум — {MAX_FOOTER_LEN}.")
+        length = visible_length(text)
+        if length > MAX_FOOTER_LEN or len(text) > MAX_RAW_LEN:
+            errors.append(f"Підвал задовгий ({length} симв.), максимум — {MAX_FOOTER_LEN}.")
         if _PLACEHOLDER_RE.search(text):
             errors.append("У підвалі не можна використовувати {поля} — тільки звичайний текст.")
         for line in text.split("\n"):
@@ -217,8 +229,9 @@ def validate_template(kind: str, text: str) -> tuple[list[str], list[str]]:
                 break
         return errors, warnings
 
-    if len(text) > MAX_TEMPLATE_LEN:
-        errors.append(f"Шаблон задовгий ({len(text)} симв.), максимум — {MAX_TEMPLATE_LEN}.")
+    length = visible_length(text)
+    if length > MAX_TEMPLATE_LEN or len(text) > MAX_RAW_LEN:
+        errors.append(f"Шаблон задовгий ({length} симв.), максимум — {MAX_TEMPLATE_LEN}.")
 
     unknown_ph = sorted({p for p in _PLACEHOLDER_RE.findall(text) if p not in PLACEHOLDERS})
     if unknown_ph:
