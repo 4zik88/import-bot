@@ -8,7 +8,7 @@ from aiogram.types import BufferedInputFile, InputMediaPhoto
 from bot.roapp.models import RoAppProduct
 from bot.telegram.templates import (
     KIND_FOOTER, KIND_LAPTOP, KIND_SMARTPHONE, KIND_TABLET,
-    close_open_tags, get_template, render,
+    close_open_tags, get_template, render, visible_length,
 )
 
 MAX_CAPTION = 1024
@@ -193,13 +193,18 @@ def _trim(text: str, max_len: int) -> str:
 
 def _finalize(body: str, footer: str) -> str:
     caption = f"{body}\n{footer}" if body else footer
-    if len(caption) <= MAX_CAPTION:
+    if visible_length(caption) <= MAX_CAPTION:
         return caption
-    # Too long: cut the body at a line break and keep the footer intact.
-    tail = "\n" + footer
-    available = MAX_CAPTION - len(tail) - 3
-    cut = body[:max(available, 0)].rsplit("\n", 1)[0]
-    return close_open_tags(cut) + "..." + tail
+    # Too long: drop whole body lines from the end and keep the footer intact.
+    # Cutting at line breaks never splits an HTML tag in half.
+    tail = "...\n" + footer
+    lines = body.split("\n")
+    while lines:
+        cut = close_open_tags("\n".join(lines).rstrip("\n")) + "\n"
+        if visible_length(cut + tail) <= MAX_CAPTION:
+            return cut + tail
+        lines.pop()
+    return footer
 
 
 def _escape(text: str) -> str:

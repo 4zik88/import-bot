@@ -16,7 +16,7 @@ from bot.telegram.formatter import MAX_CAPTION, render_caption
 from bot.telegram.templates import (
     DEFAULT_TEMPLATES, KIND_FOOTER, KIND_LABELS, KIND_LAPTOP, KIND_SMARTPHONE,
     KIND_TABLET, KINDS, PLACEHOLDERS, TAGS, get_template, is_custom,
-    reset_template, save_template, validate_template,
+    reset_template, save_template, validate_template, visible_length,
 )
 
 router = Router()
@@ -296,8 +296,8 @@ async def on_template_text(message: Message, state: FSMContext) -> None:
         return
 
     problems = await _send_previews(message, kind, draft)
-    longest = max((len(c) for _, c in _render_samples(kind, draft)), default=0)
-    if longest >= MAX_CAPTION:
+    longest = max((visible_length(c) for _, c in _render_samples(kind, draft)), default=0)
+    if longest > MAX_CAPTION:
         warnings.append(
             f"Пост виходить задовгим (ліміт Telegram — {MAX_CAPTION} символів). "
             "Частина тексту буде обрізана — скоротіть шаблон."
