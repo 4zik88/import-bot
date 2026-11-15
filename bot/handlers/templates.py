@@ -61,6 +61,13 @@ SAMPLES: dict[str, list[tuple[str, RoAppProduct, float | None]]] = {
             screen='6.1" Dynamic AMOLED 2X 120Hz', processor="Snapdragon 8 Gen 2",
             battery="3900 мАч (заміна, нова)",
         ), 17000),
+        ("Android, заповнений стан", _sample(
+            "Samsung Galaxy A54 8/256GB Awesome Graphite", 9800,
+            screen='6.4" Super AMOLED 120Hz', processor="Exynos 1380",
+            camera="50 MP + 12 MP + 5 MP", battery="5000 мАч (89%)",
+            complect="Коробка, кабель",
+            screen_condition="A (Мікроподряпини)", body_condition="B (Помітні потертості)",
+        ), None),
     ],
     KIND_TABLET: [
         ("iPad, Wi-Fi", _sample(
