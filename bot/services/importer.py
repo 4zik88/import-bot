@@ -12,6 +12,7 @@ from bot.telegram.formatter import (
     CAT_LAPTOPS, CAT_SMARTPHONES, CAT_TABLETS,
     build_media_group, format_caption, format_sold_caption, set_category_tree,
 )
+from bot.telegram.templates import refresh_custom_fields
 from bot.telegram.publisher import (
     delete_message, edit_caption, edit_text, message_exists,
     publish_media_group, publish_text,
@@ -146,6 +147,8 @@ async def run_import(
     silent = (await db.get_setting("silent_mode") or "") == "1"
     client = RoAppClient(api_token)
     try:
+        # Keep the field list current so templates can use newly added RoApp fields.
+        await refresh_custom_fields(client)
         # Load all category trees (smartphones, tablets, laptops)
         await _load_category_trees(client)
         allowed_ids = _get_all_allowed_ids()

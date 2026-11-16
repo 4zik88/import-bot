@@ -156,6 +156,10 @@ def _template_values(product: RoAppProduct, old_price: float | None) -> dict[str
     }
     values = {k: _escape(v) for k, v in values.items()}
     values["price"] = _price_value(product, old_price)
+    # Any RoApp custom field, keyed by its attribute key ("f" + field id).
+    for key, val in product.custom_attributes.items():
+        if val and key not in values:
+            values[key] = _escape(str(val))
     return values
 
 
