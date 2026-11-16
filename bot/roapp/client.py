@@ -338,9 +338,21 @@ class RoAppClient:
             if p.sku in stock:
                 p.stock = stock[p.sku]
 
+    async def get_product_custom_fields(self) -> list[tuple[str, str]]:
+        """Product custom field definitions as ``(attribute key, title)``.
+
+        The attribute key matches product ``custom_fields`` keys ("f" + id).
+        """
+        data = await self._get("/v2/catalog/products/custom-fields")
+        items = data if isinstance(data, list) else data.get("data", data.get("results", []))
+        fields = []
+        for f in items:
+            if isinstance(f, dict) and f.get("id") and f.get("title"):
+                fields.append((f"f{f['id']}", str(f["title"])))
+        return fields
+
     async def _get_custom_fields_map(self) -> dict[str, str]:
         try:
-            raw = await self._get_all_pages("/products/custom-fields/")
-            return {str(f.get("id", "")): str(f.get("title", f.get("name", ""))) for f in raw if f.get("id")}
+            return dict(await self.get_product_custom_fields())
         except Exception:
             return {}

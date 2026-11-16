@@ -12,11 +12,12 @@ from aiogram.types import LinkPreviewOptions, Message
 
 from bot.config import settings
 from bot.roapp.models import RoAppProduct
-from bot.telegram.formatter import MAX_CAPTION, render_caption
+from bot.telegram.formatter import FIELD_MAP, MAX_CAPTION, render_caption
 from bot.telegram.templates import (
     DEFAULT_TEMPLATES, KIND_FOOTER, KIND_LABELS, KIND_LAPTOP, KIND_SMARTPHONE,
-    KIND_TABLET, KINDS, PLACEHOLDERS, TAGS, get_template, is_custom,
-    reset_template, save_template, validate_template, visible_length,
+    KIND_TABLET, KINDS, PLACEHOLDERS, TAGS, custom_fields, get_template, is_custom,
+    refresh_custom_fields, reset_template, save_template, validate_template,
+    visible_length,
 )
 
 router = Router()
@@ -87,11 +88,34 @@ SAMPLES: dict[str, list[tuple[str, RoAppProduct, float | None]]] = {
 }
 SAMPLES[KIND_FOOTER] = SAMPLES[KIND_SMARTPHONE][:1]
 
+# Samples meant to show how lines disappear when fields are empty; they don't
+# get example values for extra RoApp fields.
+_SPARSE_SAMPLES = {"Android, знижка ціни, нова АКБ, без стану"}
+
+# RoApp field keys already exposed through a built-in placeholder.
+_BUILTIN_FIELD_KEYS = {key for key, name in FIELD_MAP.items() if name in PLACEHOLDERS}
+
+
+def _extra_fields() -> list[tuple[str, str]]:
+    """RoApp fields not covered by a built-in placeholder."""
+    return [(k, t) for k, t in custom_fields() if k not in _BUILTIN_FIELD_KEYS]
+
+
+def _with_example_fields(product: RoAppProduct) -> RoAppProduct:
+    """Copy of ``product`` with example values for every extra RoApp field,
+    so a preview shows lines that use them."""
+    attrs = dict(product.custom_attributes)
+    for key, title in _extra_fields():
+        attrs.setdefault(key, f"приклад — {title}")
+    return product.model_copy(update={"custom_attributes": attrs})
+
 
 def _render_samples(kind: str, draft: str) -> list[tuple[str, str]]:
     """Render ``draft`` on the sample products for ``kind``."""
     out = []
     for label, product, old_price in SAMPLES[kind]:
+        if label not in _SPARSE_SAMPLES:
+            product = _with_example_fields(product)
         if kind == KIND_FOOTER:
             caption = render_caption(KIND_SMARTPHONE, product, old_price, footer=draft)
         else:
@@ -129,10 +153,19 @@ def _reference_text(kind: str) -> str:
         )
     ph = "\n".join(f"<code>{{{n}}}</code> — {d}" for n, d in PLACEHOLDERS.items())
     tags = "\n".join(f"<code>[{n}]</code> — {d}" for n, d in TAGS.items())
+    extra = _extra_fields()
+    roapp = ""
+    if extra:
+        roapp = (
+            "<b>Додаткові поля з RoApp</b> — пишіть назву поля як у RoApp:\n"
+            + "\n".join(f"<code>{{{html.escape(t)}}}</code>" for _, t in extra)
+            + "\nНове поле, створене в RoApp, з'явиться тут автоматично.\n\n"
+        )
     return (
         f"<b>Шаблон: {KIND_LABELS[kind]}</b>\n\n"
         "<b>Поля</b> — замість них бот підставить дані з RoApp:\n"
         f"{ph}\n\n"
+        f"{roapp}"
         "Якщо поле в товарі не заповнене — <b>увесь рядок</b> з цим полем не виводиться.\n\n"
         "<b>Позначки</b> на початку рядка — рядок показується тільки якщо умова виконується:\n"
         f"{tags}\n\n"
@@ -151,6 +184,9 @@ HELP_TEXT = (
     "<b>Правила</b>\n"
     "• <code>{name}</code>, <code>{price}</code> та інші <b>поля</b> пишуться латиницею у фігурних дужках, "
     "точно як у списку. Бот підставить дані товару.\n"
+    "• Будь-яке додаткове поле з RoApp можна вставити за його назвою: "
+    "<code>{Примітки пристрою}</code>. Великі/малі літери й зайві пробіли не важливі. "
+    "Список полів RoApp бот показує, коли ви обираєте категорію.\n"
     "• Якщо поле в товарі порожнє — рядок з ним зникає з поста.\n"
     "• <code>[Apple]</code>, <code>[Android]</code> та інші <b>позначки</b> ставляться на самому початку рядка. "
     "Рядок буде видно тільки для товарів, що підходять.\n"
@@ -236,6 +272,7 @@ async def cb_open(callback: types.CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     await state.clear()
+    await refresh_custom_fields()
     status = "✏️ змінений" if is_custom(kind) else "стандартний"
     await callback.message.answer(_reference_text(kind), parse_mode="HTML")
     await callback.message.answer(f"Поточний шаблон ({status}) — наступним повідомленням 👇")
@@ -291,6 +328,8 @@ async def on_template_text(message: Message, state: FSMContext) -> None:
         return
 
     draft = message.html_text
+    # Pick up fields created in RoApp since the template was opened.
+    await refresh_custom_fields()
     errors, warnings = validate_template(kind, draft)
     if errors:
         await message.answer(

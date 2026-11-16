@@ -14,9 +14,14 @@ rendering stays synchronous.
 from __future__ import annotations
 
 import html
+import json
+import logging
 import re
 
 from bot import db
+from bot.roapp.client import RoAppClient
+
+logger = logging.getLogger(__name__)
 
 KIND_SMARTPHONE = "smartphone"
 KIND_TABLET = "tablet"
@@ -166,18 +171,91 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 _cache: dict[str, str] = {}
 
+# RoApp product custom fields: normalized title -> (attribute key, title).
+# The attribute key is how the field appears in product.custom_attributes
+# ("f" + field id). Persisted so templates still resolve when RoApp is down.
+_CUSTOM_FIELDS_SETTING = "roapp_custom_fields"
+_custom_fields: dict[str, tuple[str, str]] = {}
+
+# Latin letters that look like Cyrillic ones. RoApp titles sometimes mix them
+# (e.g. a Latin "i" in "Примiтки"), so both sides are folded before comparing.
+_HOMOGLYPHS = str.maketrans({
+    "A": "А", "B": "В", "C": "С", "E": "Е", "H": "Н", "I": "І", "K": "К",
+    "M": "М", "O": "О", "P": "Р", "T": "Т", "X": "Х", "Y": "У",
+    "a": "а", "c": "с", "e": "е", "i": "і", "o": "о", "p": "р", "x": "х", "y": "у",
+})
+
 
 def _setting_key(kind: str) -> str:
     return f"template_{kind}"
 
 
 async def load_templates() -> None:
-    """Load custom templates from the DB into the in-memory cache."""
+    """Load custom templates and known RoApp fields from the DB into memory."""
     _cache.clear()
     for kind in KINDS:
         value = await db.get_setting(_setting_key(kind))
         if value:
             _cache[kind] = value
+    stored = await db.get_setting(_CUSTOM_FIELDS_SETTING)
+    if stored:
+        try:
+            set_custom_fields([(k, t) for k, t in json.loads(stored)])
+        except (ValueError, TypeError):
+            logger.warning("Ignoring malformed stored RoApp custom fields")
+
+
+def normalize_field_name(name: str) -> str:
+    name = html.unescape(name)
+    for apostrophe in ("’", "ʼ", "`", "‘"):
+        name = name.replace(apostrophe, "'")
+    return " ".join(name.translate(_HOMOGLYPHS).lower().split())
+
+
+def set_custom_fields(fields: list[tuple[str, str]]) -> None:
+    """Replace the known RoApp fields with ``(attribute key, title)`` pairs."""
+    _custom_fields.clear()
+    for key, title in fields:
+        norm = normalize_field_name(title)
+        if norm and norm not in PLACEHOLDERS:
+            _custom_fields.setdefault(norm, (key, title.strip()))
+
+
+def custom_fields() -> list[tuple[str, str]]:
+    """Known RoApp fields as ``(attribute key, title)``, in RoApp order."""
+    return list(_custom_fields.values())
+
+
+async def refresh_custom_fields(client: RoAppClient | None = None) -> bool:
+    """Fetch the RoApp field list and persist it. Returns False on failure,
+    in which case the previously known list stays in use."""
+    own_client = client is None
+    if own_client:
+        token = await db.get_setting("roapp_api_token")
+        if not token:
+            return False
+        client = RoAppClient(token)
+    try:
+        fields = await client.get_product_custom_fields()
+    except Exception as e:
+        logger.warning("Could not load RoApp custom fields: %s", e)
+        return False
+    finally:
+        if own_client:
+            await client.close()
+    if not fields:
+        return False
+    set_custom_fields(fields)
+    await db.set_setting(_CUSTOM_FIELDS_SETTING, json.dumps(fields, ensure_ascii=False))
+    return True
+
+
+def resolve_placeholder(name: str) -> str | None:
+    """Map a placeholder to its key in the render values, or None if unknown."""
+    if name in PLACEHOLDERS:
+        return name
+    hit = _custom_fields.get(normalize_field_name(name))
+    return hit[0] if hit else None
 
 
 def get_template(kind: str) -> str:
@@ -233,10 +311,13 @@ def validate_template(kind: str, text: str) -> tuple[list[str], list[str]]:
     if length > MAX_TEMPLATE_LEN or len(text) > MAX_RAW_LEN:
         errors.append(f"Шаблон задовгий ({length} симв.), максимум — {MAX_TEMPLATE_LEN}.")
 
-    unknown_ph = sorted({p for p in _PLACEHOLDER_RE.findall(text) if p not in PLACEHOLDERS})
+    unknown_ph = sorted({p for p in _PLACEHOLDER_RE.findall(text) if resolve_placeholder(p) is None})
     if unknown_ph:
         listed = ", ".join("{" + p + "}" for p in unknown_ph)
-        errors.append(f"Невідомі поля: {listed}. Перевірте написання (латиницею, без пробілів).")
+        errors.append(
+            f"Невідомі поля: {listed}. Такого поля немає ні серед стандартних, ні в RoApp — "
+            "перевірте написання. Список полів RoApp: /template → категорія."
+        )
 
     unknown_tags: list[str] = []
     for line in text.split("\n"):
@@ -258,10 +339,16 @@ def validate_template(kind: str, text: str) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def _lookup(values: dict[str, str], name: str) -> str:
+    key = resolve_placeholder(name)
+    return values.get(key, "") if key else ""
+
+
 def render(template: str, values: dict[str, str], flags: dict[str, bool]) -> str:
     """Render a template.
 
-    ``values`` must already be HTML-escaped. ``flags`` maps canonical tag
+    ``values`` must already be HTML-escaped; built-in fields are keyed by
+    placeholder name, RoApp fields by attribute key (see resolve_placeholder). ``flags`` maps canonical tag
     names to whether the product matches. Markup on dropped lines is carried
     over to the next kept line, so formatting spanning several lines never
     leaves an unclosed HTML tag behind.
@@ -279,11 +366,11 @@ def render(template: str, values: dict[str, str], flags: dict[str, bool]) -> str
                 continue
 
         names = _PLACEHOLDER_RE.findall(line)
-        if names and not any(values.get(n, "").strip() for n in names):
+        if names and not any(_lookup(values, n).strip() for n in names):
             carry += "".join(_HTML_TAG_RE.findall(line))
             continue
 
-        line = _PLACEHOLDER_RE.sub(lambda mm: values.get(mm.group(1), ""), line)
+        line = _PLACEHOLDER_RE.sub(lambda mm: _lookup(values, mm.group(1)), line)
         out.append(carry + line)
         carry = ""
 
