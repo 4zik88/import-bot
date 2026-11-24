@@ -26,14 +26,16 @@ logger = logging.getLogger(__name__)
 KIND_SMARTPHONE = "smartphone"
 KIND_TABLET = "tablet"
 KIND_LAPTOP = "laptop"
+KIND_SOLD = "sold"
 KIND_FOOTER = "footer"
 
-KINDS = (KIND_SMARTPHONE, KIND_TABLET, KIND_LAPTOP, KIND_FOOTER)
+KINDS = (KIND_SMARTPHONE, KIND_TABLET, KIND_LAPTOP, KIND_SOLD, KIND_FOOTER)
 
 KIND_LABELS = {
     KIND_SMARTPHONE: "📱 Смартфони",
     KIND_TABLET: "📟 Планшети",
     KIND_LAPTOP: "💻 Ноутбуки",
+    KIND_SOLD: "❌ Продано",
     KIND_FOOTER: "📝 Підвал (контакти)",
 }
 
@@ -49,6 +51,12 @@ PLACEHOLDERS: dict[str, str] = {
     "screen_condition": "стан екрана",
     "body_condition": "стан корпусу",
     "os": "операційна система (Mac OS / Windows)",
+}
+
+# The "sold" template only knows what is stored for a published post.
+SOLD_PLACEHOLDERS: dict[str, str] = {
+    "name": "назва товару",
+    "price": "ціна, за якою товар продавався",
 }
 
 # Canonical tag -> description. Matching is case-insensitive; see TAG_ALIASES.
@@ -147,6 +155,11 @@ DEFAULT_TEMPLATES: dict[str, str] = {
         "🌐 ОС: {os}\n"
         "📦 Комплектація: {complect}\n"
         "🛡 Гарантія: 1 міс."
+    ),
+    KIND_SOLD: (
+        "❌ <b>ПРОДАНО</b>\n"
+        "\n"
+        "<s>{name}</s>"
     ),
     KIND_FOOTER: (
         "━━━━━━━━━━━━━━━\n"
@@ -305,6 +318,24 @@ def validate_template(kind: str, text: str) -> tuple[list[str], list[str]]:
             if _TAG_PREFIX_RE.match(line):
                 errors.append("У підвалі не можна використовувати [позначки].")
                 break
+        return errors, warnings
+
+    if kind == KIND_SOLD:
+        length = visible_length(text)
+        if length > MAX_FOOTER_LEN or len(text) > MAX_RAW_LEN:
+            errors.append(f"Шаблон задовгий ({length} симв.), максимум — {MAX_FOOTER_LEN}.")
+        unknown = sorted({p for p in _PLACEHOLDER_RE.findall(text) if p not in SOLD_PLACEHOLDERS})
+        if unknown:
+            listed = ", ".join("{" + p + "}" for p in unknown)
+            errors.append(
+                f"Невідомі поля: {listed}. У шаблоні «Продано» доступні тільки {{name}} і {{price}}."
+            )
+        for line in text.split("\n"):
+            if _TAG_PREFIX_RE.match(line):
+                errors.append("У шаблоні «Продано» не можна використовувати [позначки].")
+                break
+        if "{name}" not in text:
+            warnings.append("У шаблоні немає {name} — у пості не буде видно, що саме продано.")
         return errors, warnings
 
     length = visible_length(text)
