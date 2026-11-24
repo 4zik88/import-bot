@@ -12,10 +12,10 @@ from aiogram.types import LinkPreviewOptions, Message
 
 from bot.config import settings
 from bot.roapp.models import RoAppProduct
-from bot.telegram.formatter import FIELD_MAP, MAX_CAPTION, render_caption
+from bot.telegram.formatter import FIELD_MAP, MAX_CAPTION, format_sold_caption, render_caption
 from bot.telegram.templates import (
     DEFAULT_TEMPLATES, KIND_FOOTER, KIND_LABELS, KIND_LAPTOP, KIND_SMARTPHONE,
-    KIND_TABLET, KINDS, PLACEHOLDERS, TAGS, custom_fields, get_template, is_custom,
+    KIND_SOLD, KIND_TABLET, KINDS, PLACEHOLDERS, SOLD_PLACEHOLDERS, TAGS, custom_fields, get_template, is_custom,
     refresh_custom_fields, reset_template, save_template, validate_template,
     visible_length,
 )
@@ -47,7 +47,8 @@ def _sample(name: str, price: float, **fields: str) -> RoAppProduct:
     )
 
 
-# (description, product, old price) per kind; the footer previews on a smartphone.
+# (description, product, old price) per kind; the footer and the sold notice
+# preview on a smartphone.
 SAMPLES: dict[str, list[tuple[str, RoAppProduct, float | None]]] = {
     KIND_SMARTPHONE: [
         ("iPhone, Європа", _sample(
@@ -87,6 +88,7 @@ SAMPLES: dict[str, list[tuple[str, RoAppProduct, float | None]]] = {
     ],
 }
 SAMPLES[KIND_FOOTER] = SAMPLES[KIND_SMARTPHONE][:1]
+SAMPLES[KIND_SOLD] = SAMPLES[KIND_SMARTPHONE][:1]
 
 # Samples meant to show how lines disappear when fields are empty; they don't
 # get example values for extra RoApp fields.
@@ -118,6 +120,8 @@ def _render_samples(kind: str, draft: str) -> list[tuple[str, str]]:
             product = _with_example_fields(product)
         if kind == KIND_FOOTER:
             caption = render_caption(KIND_SMARTPHONE, product, old_price, footer=draft)
+        elif kind == KIND_SOLD:
+            caption = format_sold_caption(product.name, product.price, template=draft)
         else:
             caption = render_caption(kind, product, old_price, template=draft)
         out.append((label, caption))
@@ -151,6 +155,18 @@ def _reference_text(kind: str) -> str:
             "Тут не можна використовувати {поля} і [позначки] — тільки звичайний текст. "
             "Посилання та жирний шрифт — через меню форматування Telegram."
         )
+    if kind == KIND_SOLD:
+        ph = "\n".join(f"<code>{{{n}}}</code> — {d}" for n, d in SOLD_PLACEHOLDERS.items())
+        return (
+            f"<b>Шаблон: {KIND_LABELS[kind]}</b>\n\n"
+            "Цим текстом бот замінює підпис поста, коли товар продано, "
+            "а сам пост видалити вже не можна (Telegram дозволяє ботам видаляти пости "
+            "тільки протягом 48 годин). Свіжі пости бот просто видаляє.\n\n"
+            f"<b>Поля</b>:\n{ph}\n\n"
+            "Інші поля й [позначки] тут недоступні. Підвал додається в кінці автоматично.\n\n"
+            "Новий шаблон застосовується до постів, які будуть продані після збереження. "
+            "Пости, вже позначені «ПРОДАНО», не змінюються."
+        )
     ph = "\n".join(f"<code>{{{n}}}</code> — {d}" for n, d in PLACEHOLDERS.items())
     tags = "\n".join(f"<code>[{n}]</code> — {d}" for n, d in TAGS.items())
     extra = _extra_fields()
@@ -175,7 +191,7 @@ def _reference_text(kind: str) -> str:
 
 HELP_TEXT = (
     "<b>Як змінити шаблон поста</b>\n\n"
-    "1. /template → оберіть категорію (Смартфони, Планшети, Ноутбуки або Підвал).\n"
+    "1. /template → оберіть шаблон (Смартфони, Планшети, Ноутбуки, Продано або Підвал).\n"
     "2. Бот надішле поточний шаблон окремим повідомленням. "
     "Скопіюйте його (утримуйте повідомлення → «Копіювати»).\n"
     "3. Натисніть «✏️ Змінити», вставте текст у поле вводу, відредагуйте й надішліть.\n"
@@ -204,6 +220,13 @@ HELP_TEXT = (
     "/template → категорія → «↩️ Стандартний шаблон» поверне шаблон до початкового вигляду.\n"
     "/cancel — вийти з редагування без змін."
 )
+
+
+def _applies_note(kind: str) -> str:
+    if kind == KIND_SOLD:
+        return "Він застосовується до постів, які будуть продані відтепер."
+    return ("Щоб оновити вже опубліковані пости — запустіть /import "
+            "(може зайняти кілька хвилин).")
 
 
 def _kind_kb(kind: str) -> types.InlineKeyboardMarkup:
@@ -386,10 +409,7 @@ async def cb_save(callback: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
-        f"✅ Шаблон «{KIND_LABELS[kind]}» збережено.\n\n"
-        "Нові пости вже публікуватимуться з ним.\n"
-        "Щоб оновити вже опубліковані пости — запустіть /import "
-        "(може зайняти кілька хвилин).",
+        f"✅ Шаблон «{KIND_LABELS[kind]}» збережено.\n\n" + _applies_note(kind),
     )
     await callback.answer("Збережено")
 
@@ -432,7 +452,6 @@ async def cb_reset_ok(callback: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
-        f"↩️ Шаблон «{KIND_LABELS[kind]}» повернуто до стандартного.\n"
-        "Щоб оновити вже опубліковані пости — запустіть /import.",
+        f"↩️ Шаблон «{KIND_LABELS[kind]}» повернуто до стандартного.\n" + _applies_note(kind),
     )
     await callback.answer()

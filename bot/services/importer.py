@@ -215,7 +215,7 @@ async def run_import(
                 else:
                     # Can't delete (>48h) — mark caption as SOLD
                     first_msg_id = msg_id.split(",")[0].strip()
-                    sold_caption = format_sold_caption(pp.get("name") or "")
+                    sold_caption = format_sold_caption(pp.get("name") or "", pp.get("price"))
                     if await edit_caption(bot, ch_id, first_msg_id, sold_caption) \
                        or await edit_text(bot, ch_id, first_msg_id, sold_caption):
                         await db.update_posted_product(sku, is_sold=True, content_hash="")

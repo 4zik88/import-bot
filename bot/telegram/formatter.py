@@ -7,7 +7,7 @@ from aiogram.types import BufferedInputFile, InputMediaPhoto
 
 from bot.roapp.models import RoAppProduct
 from bot.telegram.templates import (
-    KIND_FOOTER, KIND_LAPTOP, KIND_SMARTPHONE, KIND_TABLET,
+    KIND_FOOTER, KIND_LAPTOP, KIND_SMARTPHONE, KIND_SOLD, KIND_TABLET,
     close_open_tags, get_template, render, visible_length,
 )
 
@@ -101,16 +101,20 @@ def _battery_replaced(product: RoAppProduct) -> bool:
     return any(kw in battery.lower() for kw in ["замін", "нова", "замен", "replace"]) if battery else False
 
 
-def format_sold_caption(name: str) -> str:
-    """Caption for posts whose product was sold but can't be deleted (>48h)."""
-    lines = [
-        "❌ <b>ПРОДАНО</b>",
-        "",
-        f"<s>{_escape(name)}</s>",
-        "",
-        get_template(KIND_FOOTER),
-    ]
-    return "\n".join(lines)
+def format_sold_caption(
+    name: str, price: float | None = None,
+    template: str | None = None, footer: str | None = None,
+) -> str:
+    """Caption for posts whose product was sold but can't be deleted (>48h).
+    ``template``/``footer`` override the saved ones (for previews)."""
+    values = {
+        "name": _escape(name),
+        "price": f"{_format_price(price)} грн" if price and price > 0 else "",
+    }
+    body = render(template if template is not None else get_template(KIND_SOLD), values, {})
+    footer = footer if footer is not None else get_template(KIND_FOOTER)
+    # A blank line separates the sold notice from the footer.
+    return _finalize(f"{body}\n" if body else "", footer)
 
 
 _KIND_BY_CATEGORY = {
